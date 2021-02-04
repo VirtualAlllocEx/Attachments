@@ -1,0 +1,258 @@
+<job>
+<reference object="Outlook.Application"/>
+<script language="PerlScript">
+
+use Text::ParseWords;
+
+#  Copyright (c) 2001, Gregg A. Tavares
+#  All rights reserved.
+#
+#  Redistribution and use in source and binary forms, with or without
+#  modification, are permitted provided that the following conditions are
+#  met:
+#
+#  * Redistributions of source code must retain the above copyright notice,
+#  this list of conditions and the following disclaimer.
+#
+#  * Redistributions in binary form must reproduce the above copyright
+#  notice, this list of conditions and the following disclaimer in the
+#  documentation and/or other materials provided with the distribution.
+#
+#  * Neither the name of the Greggman nor the names of its contributors may be
+#  used to endorse or promote products derived from this software without
+#  specific prior written permission.
+#
+#  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+#  IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+#  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+#  PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
+#  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+#  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+#  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+#  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+#  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+#  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+#  POSSIBILITY OF SUCH DAMAGE.
+
+#-----------------------------------------
+#
+# This script uses Microsoft Outlook
+# to mass e-mail your registred users.
+# it will put all the e-mail in your Outbox.
+# From there you will need to click the send button
+# in Outlook. This give you a chance to verify your
+# e-mail before you send it.
+#
+# This file should be saved as "mailall.wsf"
+#
+# First, put all the registration e-mails you get from regnow
+# into their own folder in Outlook.  Then see below for
+# how to specify the folder below
+#
+# This is a perlscript based
+# Windows Host Script file
+#
+# To run it you must have Windows Host Script 2.0
+# installed which I believe is install in 98/ME/2000
+# You can download the latest from http://msdn.microsoft.com/scripting
+#
+# You also need ActivePerl and Perlscript installed.
+# Perlscript is included in ActivePerl which you
+# can download from http://www.activestate.com
+#
+# I used Perl instead of VBScript or JavaScript for
+# the regular expressions
+#
+# Usage:
+#
+# To use this script, open a Command Prompt, CD to the folder
+# you put this script in and type the following
+#
+#   cscript mailall.wsf "Check out the new Version" Message.TXT
+#
+# Where "Check out the new Version" is the title you want to use
+# and Message.TXT is the name of the file that contains the body
+# of your message.
+#
+# The content of Message.TXT can reference any of the
+# *** Text Database Entry *** info found at the bottom of each
+# of your registration e-mails.
+#
+# So, for example you could do this
+#
+#    Dear $fname $lname from $city
+#      I've got a new version for you
+#      Get it here
+#      http://www.regnow.com/$orderid/mysoft.exe
+#
+#-----------------------------------------
+# F O L D E R
+#-----------------------------------------
+#
+# Below you specify the folder in which you
+# keep your registration e-mails
+#
+# As you can see below I have a regtest
+# folder where I keep 4 registrations for
+# which I have edited the email addresses
+# to point to me so that I can test before
+# I actually send
+#-----------------------------------------
+#
+my $folder = "Saved Stuff/Saved/Thumbs/regtest";
+#my $folder = "Saved Stuff/Saved/Thumbs/Registrations";
+
+#
+# read_file (filename)
+#
+# return file as string
+#
+sub read_file
+{
+   my $filename = $_[0];
+   my $data = "";
+
+   my $result = open(CONTENT, $filename);
+   if (! $result)
+   {
+      $WScript->Echo ("*** ERROR: can't open $filename: $!");
+   }
+   else
+   {
+      local($/) = undef;
+      $data = <CONTENT>;
+
+      close(CONTENT);
+   }
+
+   return ($data);
+}
+
+my $cont = 1;
+my $ol = $WScript->CreateObject("Outlook.Application");
+my $olns = $ol->GetNameSpace("MAPI");
+
+my $MyFolder;
+
+{
+   my $pathSoFar = "";
+   my $sep = "";
+   my $parent = $olns;
+   foreach $subfolder (split ('/', $folder))
+   {
+      $subfolder =~ s/^\s*(.*?)\s*^/$1/sg;   # strip space
+      $pathSoFar = $pathSoFar . $sep . $subfolder;
+      $parent = $parent->Folders($subfolder);
+      if (!$parent)
+      {
+         $cont = 0;
+         $WScript->Echo("No Folder ($pathSoFar)");
+         last;
+      }
+      $sep = "/";
+   }
+   $MyFolder = $parent;
+}
+
+my $new_subject = "err";
+my $new_body    = "missing";
+
+if ($cont)
+{
+   my $arg = $WScript->{Arguments};
+
+   my $countArgs = $arg->{Count};
+
+   if ($countArgs != 2)
+   {
+      $cont = 0;
+      $WScript->Echo("Usage: mailall subject body-filename");
+   }
+   else
+   {
+      $new_subject = $arg->Item(0);
+      $new_body = read_file($arg->Item(1));
+
+      if (length($new_body) <= 0)
+      {
+         $WScript->Echo("ERROR:Nothing in body of message!!!");
+         $cont = 0;
+      }
+   }
+}
+
+if ($cont) {
+
+#Get the number of items in the folder.
+my $NumItems = $MyFolder->Items->Count;
+
+#Loop through all of the items in the folder.
+$WScript->Echo ("---Start---");
+for (my $i = 1; $i <= $NumItems; $i++)
+{
+   my $body = $MyFolder->Items($i)->Body;
+
+   if ($body =~ /\*\*\* Text Database Entry \*\*\*\s*(.*?)$/is)
+   {
+      my $part = $1;
+
+      if ($part =~ /^(.*?)\n(.*?)$/)
+      {
+         my $headings = $1;
+         my $vals     = $2;
+         my $ii;
+         my %record = ();
+
+#$WScript->Echo ($i, " head:", $headings, "\n");
+#$WScript->Echo ($i, " valu:", $vals, "\n");
+
+         my @names = quotewords (",", 0, $headings);
+         my @data  = quotewords (",", 0, $vals);
+
+         for ($ii = 0; $ii <= $#names; $ii++)
+         {
+            $records{$names[$ii]} = $data[$ii];
+         }
+
+         #$WScript->Echo ($i, "------------------------");
+         #for $key (keys %records)
+         #{
+         #   $WScript->Echo ("$key = ($records{$key})");
+         #}
+
+         $WScript->Echo ($i, "(", $records{'email'}, ")");
+
+#         my $mail = $ol->CreateItem (olMailItem);  # ! I don't know how to access these constants from perl but I know there is a way
+         my $mail = $ol->CreateItem (0);
+         my $rep  = $mail->{Recipients};
+
+         $rep->Add ($records{'email'});
+         $rep->ResolveAll ();
+
+         # replace all the $vars in the text
+         my $fixed_body = $new_body;
+
+         $fixed_body =~ s/\$([A-Z0-9_]+)/
+                        my $id = $1;
+                        my $value = '$' . $id;
+                        if (defined ($records{$id}))
+                        {
+                           $value = $records{$id};
+                        }
+                        $value;
+                        /sgie;
+
+         $mail->{Subject} = $new_subject;
+         $mail->{Body}    = $fixed_body;
+
+         $mail->Send ();
+      }
+   }
+}
+$WScript->Echo ("---Done---");
+} # end if
+
+</script>
+</job>
+
+
